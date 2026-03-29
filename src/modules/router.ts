@@ -1,7 +1,6 @@
 import { CoralSwapClient } from '@/client';
 import { TradeType } from '@/types/common';
 import { SwapQuote } from '@/types/swap';
-import { ValidationError } from '../errors';
 
 /**
  * Result of the pathfinding algorithm.
@@ -27,10 +26,13 @@ export class RouterModule {
    * Fetches all pairs from the factory to build a token graph and
    * simulates swaps across all paths up to 3 hops.
    *
+   * For `EXACT_IN`, the optimal path maximises the output amount.
+   * For `EXACT_OUT`, the optimal path minimises the required input amount.
+   *
    * @param tokenIn - Source token address.
    * @param tokenOut - Destination token address.
    * @param amount - Amount to swap (in smallest units).
-   * @param tradeType - EXACT_IN only (currently).
+   * @param tradeType - EXACT_IN (maximise output) or EXACT_OUT (minimise input).
    * @returns The best path and its estimated quote.
    */
   async findOptimalPath(
@@ -39,10 +41,6 @@ export class RouterModule {
     amount: bigint,
     tradeType: TradeType = TradeType.EXACT_IN,
   ): Promise<OptimalPath | null> {
-    if (tradeType !== TradeType.EXACT_IN) {
-      throw new ValidationError('Only EXACT_IN is currently supported for pathfinding');
-    }
-
     const allPairs = await this.client.factory.getAllPairs();
     const tokenGraph = await this.buildTokenGraph(allPairs);
 
@@ -72,7 +70,12 @@ export class RouterModule {
           });
         }
 
-        if (!bestPath || quote.amountOut > bestPath.quote.amountOut) {
+        const isBetter =
+          tradeType === TradeType.EXACT_OUT
+            ? !bestPath || quote.amountIn < bestPath.quote.amountIn
+            : !bestPath || quote.amountOut > bestPath.quote.amountOut;
+
+        if (isBetter) {
           bestPath = { path, quote };
         }
       } catch {

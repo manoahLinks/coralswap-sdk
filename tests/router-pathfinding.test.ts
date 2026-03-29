@@ -46,6 +46,7 @@ function buildMockClient(
       return p ? p.address : null;
     }),
     config: { defaultSlippageBps: 50 },
+    networkConfig: { networkPassphrase: 'Test SDF Network ; September 2015' },
     getDeadline: jest.fn().mockReturnValue(9999999999),
   };
 }
@@ -134,5 +135,90 @@ describe('RouterModule.findOptimalPath', () => {
     const result = await routerModule.findOptimalPath(T_A, T_E, 1000n);
 
     expect(result).toBeNull(); // Because A-B-C-D-E is 4 hops
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EXACT_OUT pathfinding
+// ---------------------------------------------------------------------------
+
+describe('RouterModule.findOptimalPath (EXACT_OUT)', () => {
+  it('finds a direct EXACT_OUT path and computes required input', async () => {
+    const client = buildMockClient([
+      { address: 'P_AB', token0: T_A, token1: T_B, reserve0: 1000000n, reserve1: 1000000n, feeBps: 30 },
+    ]);
+    const routerModule = new RouterModule(client as any);
+
+    const result = await routerModule.findOptimalPath(T_A, T_B, 1000n, TradeType.EXACT_OUT);
+
+    expect(result).not.toBeNull();
+    expect(result?.path).toEqual([T_A, T_B]);
+    // For EXACT_OUT the desired output is the amount passed in
+    expect(result?.quote.amountOut).toBe(1000n);
+    // Required input must be greater than output (due to fees)
+    expect(result?.quote.amountIn).toBeGreaterThan(1000n);
+  });
+
+  it('selects the path with minimum required input for EXACT_OUT', async () => {
+    // Direct path A -> C (low liquidity -> higher input required)
+    // 2-hop path A -> B -> C (high liquidity -> lower input required)
+    const client = buildMockClient([
+      { address: 'P_AC', token0: T_A, token1: T_C, reserve0: 10000n, reserve1: 10000n, feeBps: 30 },
+      { address: 'P_AB', token0: T_A, token1: T_B, reserve0: 1000000n, reserve1: 1000000n, feeBps: 30 },
+      { address: 'P_BC', token0: T_B, token1: T_C, reserve0: 1000000n, reserve1: 1000000n, feeBps: 30 },
+    ]);
+    const routerModule = new RouterModule(client as any);
+
+    // Want exactly 5000 tokens out — high-liquidity 2-hop path should require less input
+    const result = await routerModule.findOptimalPath(T_A, T_C, 5000n, TradeType.EXACT_OUT);
+
+    expect(result).not.toBeNull();
+    expect(result?.path).toEqual([T_A, T_B, T_C]);
+  });
+
+  it('finds a 3-hop EXACT_OUT path when it requires less input', async () => {
+    // Direct path A -> D (very low liquidity)
+    // 3-hop path A -> B -> C -> D (moderate liquidity)
+    const client = buildMockClient([
+      { address: 'P_AD', token0: T_A, token1: T_D, reserve0: 1000n, reserve1: 1000n, feeBps: 30 },
+      { address: 'P_AB', token0: T_A, token1: T_B, reserve0: 100000n, reserve1: 100000n, feeBps: 30 },
+      { address: 'P_BC', token0: T_B, token1: T_C, reserve0: 100000n, reserve1: 100000n, feeBps: 30 },
+      { address: 'P_CD', token0: T_C, token1: T_D, reserve0: 100000n, reserve1: 100000n, feeBps: 30 },
+    ]);
+    const routerModule = new RouterModule(client as any);
+
+    const result = await routerModule.findOptimalPath(T_A, T_D, 500n, TradeType.EXACT_OUT);
+
+    expect(result).not.toBeNull();
+    expect(result?.path).toEqual([T_A, T_B, T_C, T_D]);
+  });
+
+  it('returns null when no EXACT_OUT path exists', async () => {
+    const client = buildMockClient([
+      { address: 'P_AB', token0: T_A, token1: T_B, reserve0: 1000000n, reserve1: 1000000n, feeBps: 30 },
+      { address: 'P_CD', token0: T_C, token1: T_D, reserve0: 1000000n, reserve1: 1000000n, feeBps: 30 },
+    ]);
+    const routerModule = new RouterModule(client as any);
+
+    const result = await routerModule.findOptimalPath(T_A, T_D, 1000n, TradeType.EXACT_OUT);
+
+    expect(result).toBeNull();
+  });
+
+  it('amounts array is consistent across hops (reverse computation)', async () => {
+    const client = buildMockClient([
+      { address: 'P_AB', token0: T_A, token1: T_B, reserve0: 500000n, reserve1: 500000n, feeBps: 30 },
+      { address: 'P_BC', token0: T_B, token1: T_C, reserve0: 500000n, reserve1: 500000n, feeBps: 30 },
+    ]);
+    const routerModule = new RouterModule(client as any);
+
+    const result = await routerModule.findOptimalPath(T_A, T_C, 1000n, TradeType.EXACT_OUT);
+
+    expect(result).not.toBeNull();
+    // The final output should be the requested amount
+    expect(result?.quote.amountOut).toBe(1000n);
+    // amountIn should be positive and greater than amountOut (fees + slippage)
+    expect(result?.quote.amountIn).toBeGreaterThan(0n);
+    expect(result?.quote.amountIn).toBeGreaterThan(result!.quote.amountOut);
   });
 });
