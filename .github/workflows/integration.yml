@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     # Allow fork PRs to fail (they won't have the secrets)
     continue-on-error: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
-    environment: testnet
 
     steps:
       - uses: actions/checkout@v4
